@@ -350,6 +350,14 @@ class BITStar:
         f=open("logfiles_BIT_link/link_info_"+str(problemindex)+".pkl","wb")
         #print(edge_infocoll_full)
         pickle.dump((edge_info_full,edge_infocoll_full),f)
+        obstacle_list = []
+        for half_size, center in self.env.obstacles:
+            half_size = [float(v) for v in half_size]
+            center = [float(v) for v in center]
+            obstacle_list.append((half_size, center))
+        obstacle_file = open('logfiles_BIT_link/obstacles_' + str(problemindex) + '.pkl', 'wb')
+        pickle.dump(obstacle_list, obstacle_file)
+        obstacle_file.close()
         f.close()
         return self.samples, self.edges, self.env.collision_check_count - collision_checks, \
                self.g_scores[self.goal], self.T, time() - init_time

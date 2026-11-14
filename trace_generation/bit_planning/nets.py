@@ -351,7 +351,10 @@ from torch_sparse import SparseTensor
 
 from torch_geometric.nn import LEConv
 from torch_geometric.utils import softmax
-from torch_geometric.nn.pool.topk_pool import topk
+try:
+    from torch_geometric.nn.pool.topk_pool import topk
+except ImportError:
+    from torch_geometric.nn.pool.select.topk import topk
 from torch_geometric.utils import add_remaining_self_loops
 
 
