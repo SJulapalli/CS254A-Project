@@ -14,7 +14,9 @@ RAMULATOR_EXT_DIR := ramulator_ext
 RAMULATOR_EXT_INCS := -isystem ramulator/src -isystem ramulator/ext/spdlog/include -isystem ramulator/ext/yaml-cpp/include
 RAMULATOR_EXT_CXXFLAGS := -std=c++20 -O3 -DNDEBUG -fPIC $(RAMULATOR_EXT_INCS)
 
-$(RAMULATOR_EXT_DIR)/gddr6.o: ramulator/src/dram/impl/GDDR6.cpp
+# Order-only on the Ramulator build: its CMake step fetches the spdlog and
+# yaml-cpp headers this object includes, so under -j it must finish first.
+$(RAMULATOR_EXT_DIR)/gddr6.o: ramulator/src/dram/impl/GDDR6.cpp | ramulator/libramulator.so
 	mkdir -p $(RAMULATOR_EXT_DIR)
 	$(CXX) $(RAMULATOR_EXT_CXXFLAGS) -c $< -o $@
 
