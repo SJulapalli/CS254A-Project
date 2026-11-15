@@ -61,7 +61,7 @@ def rot_z_batch(theta):
     return M
 
 class Robot():
-    def __init__(self, name: str, low: list[float], high: list[float], reach:float, base_clearance: tuple[float, float], self_test_cases: list[SelfTestCase], joint_pre, joint_post, tool, link_radius, min_segment = 1e-6, skip_base = False):
+    def __init__(self, name: str, low: list[float], high: list[float], self_test_cases: list[SelfTestCase], joint_pre, joint_post, tool, link_radius, min_segment = 1e-6, skip_base = False, reach:float = 0, base_clearance: tuple[float, float] = (0, 0)):
         self.name = name
         self.low = np.asarray(low, dtype=np.float64)
         self.high = np.asarray(high, dtype=np.float64)
@@ -106,6 +106,7 @@ class Robot():
         T = np.broadcast_to(np.eye(4), (B, 4, 4))
         frames = [T]
 
+        # Both DH and URDF (at least for the iiwa) exclusively rotate around their z axis, so both can utilize the z rotate matrix.
         for i in range(self.dof):
             T = T @ self.joint_pre[i] @ rot_z_batch(joint_angles[:, i]) @ self.joint_post[i]
             frames.append(T)
@@ -233,6 +234,29 @@ class DHRobot(Robot):
                 min_segment=config.get("min_segment", 1e-6),
                 skip_base=config.get("skip_base", False)
             )
+        
+class URDFRobot(Robot):
+    def __init__(self, config: dict):
+        # each joint is ((x, y, z), (roll, pitch, yaw)) per the URDF convention,  one row per joint.
+        # Only utilized for computing the pre matrices.
+        joint_pre = [trans(*xyz) @ rot_z(rpy[2]) @ rot_y(rpy[1]) @ rot_x(rpy[0]) for xyz, rpy in config["joints"]]
+        joint_post = [np.eye(4)] * len(joint_pre) # All I's since URDF doesn't use the post matrix.
+        
+        super().__init__(
+                name=config["name"],
+                low=config["low"],
+                high=config["high"],
+                reach=config.get("reach"),
+                base_clearance=config.get("base_clearance"),
+                self_test_cases=config.get("selftest_cases", []),
+                joint_pre=joint_pre,
+                joint_post=joint_post,
+                tool=config["tool"],
+                link_radius=config["link_radius"],
+                min_segment=config.get("min_segment", 1e-6),
+                skip_base=config.get("skip_base", False)
+            )
+    
 
 PANDA_CFG = {
     "name": "panda",
@@ -259,7 +283,28 @@ PANDA_CFG = {
     ],
 }
 
-ROBOTS = {"panda": DHRobot(PANDA_CFG)}
+KUKA_CFG = {
+    "name": "kuka_iiwa",
+    "joints": [  # (xyz, rpy) taken from model_0.urdf, every axis is "0 0 1" per the URDF, so the joints always spin around their z axis.
+        ((0, 0, 0.1575), (0, 0, 0)),
+        ((0, 0, 0.2025), (np.pi/2, 0, np.pi)),
+        ((0, 0.2045, 0), (np.pi/2, 0, np.pi)),
+        ((0, 0, 0.2155), (np.pi/2, 0, 0)),
+        ((0, 0.1845, 0), (-np.pi/2, np.pi, 0)),
+        ((0, 0, 0.2155), (np.pi/2, 0, 0)),
+        ((0, 0.081, 0),  (-np.pi/2, np.pi, 0)),
+    ],
+    "low":  [-2.967, -2.094, -2.967, -2.094, -2.967, -2.094, -3.054],
+    "high": [ 2.967,  2.094,  2.967,  2.094,  2.967,  2.094,  3.054],
+    "box_pad": 0.002,
+    "tool": [trans(0, 0, 0.045)],
+    "skip_base": True,
+    "link_radius": 0.135,
+    "selftest_cases": [SelfTestCase("zero", [0]*7, (0.0, 0.0, 1.306))],
+}
+
+
+ROBOTS = {"panda": DHRobot(PANDA_CFG), "iiwa": URDFRobot(KUKA_CFG)}
 
 if __name__ == "__main__":
     import sys
