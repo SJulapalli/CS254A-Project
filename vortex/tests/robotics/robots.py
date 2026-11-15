@@ -1,5 +1,4 @@
 import numpy as np
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 @dataclass
@@ -9,16 +8,82 @@ class SelfTestCase:
     flange_xyz: tuple[float, float, float]
     tol: float = 1e-4
 
+def trans(x, y, z):
+    M = np.eye(4)
+    M[:3,3] = (x, y, z)
+    return M
 
-class Robot(ABC):
-    def __init__(self, name: str, dof: int, low: list[float], high: list[float], reach:float, base_clearance: tuple[float, float], self_test_cases: list[SelfTestCase]):
+def rot_z(a):
+    ca, sa = np.cos(a), np.sin(a)
+    M = np.eye(4)
+    
+    M[0, 0] = ca
+    M[0, 1] = -sa
+
+    M[1, 0] = sa
+    M[1, 1] = ca
+    return M
+
+def rot_x(a):
+    ca, sa = np.cos(a), np.sin(a)
+    M = np.eye(4)
+    
+    M[1, 1] = ca
+    M[1, 2] = -sa
+
+    M[2, 1] = sa
+    M[2, 2] = ca
+    return M
+
+def rot_y(a):
+    ca, sa = np.cos(a), np.sin(a)
+    M = np.eye(4)
+    
+    M[0, 0] = ca
+    M[0, 2] = sa
+
+    M[2, 0] = -sa
+    M[2, 2] = ca
+    return M
+    
+def rot_z_batch(theta):
+    ct, st = np.cos(theta), np.sin(theta)
+    M = np.zeros((len(theta), 4, 4))
+    
+    M[:, 0, 0] = ct
+    M[:, 0, 1] = -st
+    
+    M[:, 1, 0] = st
+    M[:, 1, 1] = ct
+    
+    M[:, 2, 2] = 1.0
+    M[:, 3, 3] = 1.0
+    return M
+
+class Robot():
+    def __init__(self, name: str, low: list[float], high: list[float], reach:float, base_clearance: tuple[float, float], self_test_cases: list[SelfTestCase], joint_pre, joint_post, tool, link_radius, min_segment = 1e-6, skip_base = False):
         self.name = name
-        self.dof = dof
         self.low = np.asarray(low, dtype=np.float64)
         self.high = np.asarray(high, dtype=np.float64)
         self.reach = reach
         self.base_clearance = base_clearance            # defines how much clear space we put around the robot base.
         self.self_test_cases = self_test_cases          # have to be calculated ourselves
+        # Matrices used to calculate the transformation matrix. Depends on whether the convention utilized is DH or URDF. For URDF, joint_post = I so it doesn't do anything.
+        self.joint_pre  = np.asarray(joint_pre, dtype=np.float64).reshape(-1, 4, 4)
+        self.joint_post = np.asarray(joint_post, dtype=np.float64).reshape(-1, 4, 4)
+        self.tool = np.asarray(tool, dtype=np.float64).reshape(-1, 4, 4)
+        self.dof = len(self.joint_pre)
+        
+        # checking if there are any segments too short to be considered. Using a min_segment length for floating point error tolerance. Any segment less than the tolerance is treated as zero len, which breaks DH if left in.
+        origins0 = self._link_frames(np.zeros((1, self.dof)))[0, :, :3, 3]
+        seg_len = np.linalg.norm(np.diff(origins0, axis=0), axis=-1)
+        seg_start = np.flatnonzero(seg_len > min_segment)
+        
+        if skip_base:
+            seg_start = seg_start[seg_start > 0]
+        self.seg_start = seg_start
+        self.num_links = len(seg_start)
+        self.link_radius = np.broadcast_to(np.asarray(link_radius, dtype=np.float64), (self.num_links,)).copy()
     
     def _as_batch(self, joint_angles):
         joint_angles = np.atleast_2d(np.asarray(joint_angles, dtype=np.float64))
@@ -33,6 +98,52 @@ class Robot(ABC):
         
         centers, axes, half_extents = self._link_obbs(joint_angles)
         
+        return centers, axes, half_extents
+    
+    # computes the transformation frame for each link, including any tools (non-segments) at the end of the sequential arm
+    def _link_frames(self, joint_angles):
+        B = joint_angles.shape[0]
+        T = np.broadcast_to(np.eye(4), (B, 4, 4))
+        frames = [T]
+
+        for i in range(self.dof):
+            T = T @ self.joint_pre[i] @ rot_z_batch(joint_angles[:, i]) @ self.joint_post[i]
+            frames.append(T)
+        
+        for F in self.tool:
+            T = T @ F
+            frames.append(T)
+        
+        return np.stack(frames, axis = 1)
+    
+    
+    def flange_position(self, joint_angles):
+        return self._link_frames(self._as_batch(joint_angles))[:, -1, :3, 3]
+    
+    # computes the OBBs for the links for a pose
+    def _link_obbs(self, joint_angles):
+        origins = self._link_frames(joint_angles)[..., :3, 3]
+        start = origins[:, self.seg_start]
+        end = origins[:, self.seg_start + 1]
+        
+        centers = 0.5 * (start + end)   # segment center
+        vec = end - start           # vec that goes in direction of the segment
+        length = np.linalg.norm(vec, axis = -1, keepdims = True)
+        x_axis = vec / length       # unit vec along the direction of the vec that goes in the direction of the segment.
+
+        # Picks whichever of the e_i basis vectors is least parallel to the above x_axis as crossing with the e_z would give 0 when y is straight vertical.
+        helper = np.eye(3)[np.argmin(np.abs(x_axis), axis = -1)]
+        y_axis = np.cross(x_axis, helper)
+        y_axis /= np.linalg.norm(y_axis, axis=-1, keepdims=True)
+        
+        z_axis = np.cross(x_axis, y_axis)
+        z_axis /= np.linalg.norm(z_axis, axis=-1, keepdims=True)
+        
+        # axes aligned with the box, centered at the box center
+        axes = np.stack([x_axis, y_axis, z_axis], axis=-2)
+        r = np.broadcast_to(self.link_radius, length.shape[: -1])
+        half_extents = np.stack([length[..., 0] / 2 + r, r, r], axis=-1)
+
         return centers, axes, half_extents
     
     def selftest(self, num_random=1000, seed=0):
@@ -63,16 +174,24 @@ class Robot(ABC):
         
         
         orthonormal = np.allclose(axes @ axes.swapaxes(-1, -2), np.eye(3), atol=1e-9)
+        test_passed &= orthonormal
+        
+        det_near_1   = np.allclose(np.linalg.det(axes), 1.0, atol=1e-9)
+        test_passed &= det_near_1
+        
+        half_extents_finite = np.all(np.isfinite(half_extents)) 
+        half_extents_positive = np.all(half_extents > 0)
+        test_passed &= half_extents_finite and half_extents_positive
+        
+        half_extents_rigid = np.allclose(half_extents, half_extents[:1])
+        test_passed &= half_extents_rigid
+        
+        flange   = self.flange_position(samples)
+        u        = np.einsum('bij,bj->bi', axes[:, -1], flange - centers[:, -1])
+        flange_inside_half_extents   = np.all(np.abs(u) <= half_extents[:, -1] + 1e-9)       # flange is inside the last box
+        test_passed &= flange_inside_half_extents
         
         return test_passed
-    
-    @abstractmethod
-    def _link_obbs(self, joint_angles):
-        pass
-    
-    @abstractmethod
-    def flange_position(self, joint_angles):
-        pass
         
 class DHRobot(Robot):
     def __init__(self, config: dict):
@@ -80,117 +199,40 @@ class DHRobot(Robot):
         rows = np.asarray(config["rows"], dtype=np.float64)
         
         tool_rows = np.asarray(config.get("tool_rows", []), dtype=np.float64).reshape(-1, 4)
+        
+        def dh_setup_pre_post(convention, a, d, alpha, offset):
+            if convention == "modified":
+                return rot_x(alpha) @ trans(a, 0, 0) @ rot_z(offset), trans(0, 0, d)
+            if convention == "standard":
+                return rot_z(offset), trans(0, 0, d) @ trans(a, 0, 0) @ rot_x(alpha)
+            else: raise ValueError
+        
+        self.convention = config.get("convention", "standard")
+        self.rows = rows
+        self.tool_rows = tool_rows
+        
+        pre_post_pairs = [dh_setup_pre_post(self.convention, *row) for row in rows]
+        joint_pre = [pre for pre, _ in pre_post_pairs]
+        joint_post = [post for _, post in pre_post_pairs]
+        
+        # Tool rows don't have joints, so they'll always have rotation 0, which means the rotation matrix is just I.
+        tool = [Pres @ Posts for Pres, Posts in (dh_setup_pre_post(self.convention, *row) for row in tool_rows)]
+
 
         super().__init__(
                 name=config["name"],
-                dof=len(rows),
                 low=config["low"],
                 high=config["high"],
                 reach=config["reach"],
                 base_clearance=config["base_clearance"],
                 self_test_cases=config.get("selftest_cases", []),
+                joint_pre=joint_pre,
+                joint_post=joint_post,
+                tool=tool,
+                link_radius=config["link_radius"],
+                min_segment=config.get("min_segment", 1e-6),
+                skip_base=config.get("skip_base", False)
             )
-
-        self.convention = config.get("convention", "standard")
-        self.rows = rows
-        self.tool_rows = tool_rows
-        self.link_radius = config["link_radius"]
-        self.min_segment = config.get("min_segment", 1e-6)
-        
-        # removing frames that represent no change in length cuz they're rotations, len = 0 so they break the obb calcs.
-        all_rows = np.vstack([self.rows, self.tool_rows])
-        seg_len = np.hypot(all_rows[:, 0], all_rows[:, 1])
-        self.seg_start = np.flatnonzero(seg_len > self.min_segment)
-        self.num_links = len(self.seg_start)
-        self.link_radius = np.broadcast_to(np.asarray(config["link_radius"], dtype=np.float64), (self.num_links,)).copy()
-        # print(origins_zero)
-        # print(seg_len)
-        # print(self.seg_start)
-        # print(self.num_links)
-        # print(self.link_radius)
-    
-    def transform_helper(self, a, d, alpha, theta):
-        theta = np.asarray(theta, dtype=np.float64)
-        ct, st = np.cos(theta), np.sin(theta)
-        ca, sa = np.cos(alpha), np.sin(alpha)
-        T = np.zeros((len(theta), 4, 4))
-        
-        if self.convention == "modified":
-            T[:, 0, 0] = ct
-            T[:, 0, 1] = -st
-            T[:, 0, 3] = a
-            
-            T[:, 1, 0] = st * ca
-            T[:, 1, 1] = ct * ca
-            T[:, 1, 2] = -sa
-            T[:, 1, 3] = -sa * d
-            
-            T[:, 2, 0] = st * sa
-            T[:, 2, 1] = ct * sa
-            T[:, 2, 2] = ca
-            T[:, 2, 3] = ca * d
-        elif self.convention == "standard":
-            T[:, 0, 0] = ct
-            T[:, 0, 1] = -st * ca
-            T[:, 0, 2] = st * sa
-            T[:, 0, 3] = a * ct
-            
-            T[:, 1, 0] = st
-            T[:, 1, 1] = ct * ca
-            T[:, 1, 2] = -ct * sa
-            T[:, 1, 3] = a * st
-            
-            T[:, 2, 1] = sa
-            T[:, 2, 2] = ca
-            T[:, 2, 3] = d
-        else:
-            raise ValueError()
-        
-        T[:, 3, 3] = 1.0
-        return T
-    
-    def _frame_origins(self, joint_angles):
-        B = joint_angles.shape[0]
-        T = np.tile(np.eye(4), (B, 1, 1))
-        origins = [T[:, :3, 3].copy()]
-
-        for i, (a, d, alpha, offset) in enumerate(self.rows):
-            T = T @ self.transform_helper(a, d, alpha, joint_angles[:, i] + offset)
-            origins.append(T[:, :3, 3].copy())
-
-        for a, d, alpha, offset in self.tool_rows:
-            T = T @ self.transform_helper(a, d, alpha, np.full(B, offset))
-            origins.append(T[:, :3, 3].copy())
-
-        return np.stack(origins, axis=1)
-    
-    def flange_position(self, joint_angles):
-        return self._frame_origins(self._as_batch(joint_angles))[:, -1, :]
-    
-    def _link_obbs(self, joint_angles):
-        origins = self._frame_origins(joint_angles)
-        start = origins[:, self.seg_start]
-        end = origins[:, self.seg_start + 1]
-        
-        centers = 0.5 * (start + end)   # segment center
-        vec = end - start           # vec that goes in direction of the segment
-        length = np.linalg.norm(vec, axis = -1, keepdims = True)
-        x_axis = vec / length       # unit vec along the direction of the vec that goes in the direction of the segment.
-
-        # Picks whichever of the e_i basis vectors is least parallel to the above x_axis as crossing with the e_z would give 0 when y is straight vertical.
-        helper = np.eye(3)[np.argmin(np.abs(x_axis), axis = -1)]
-        y_axis = np.cross(x_axis, helper)
-        y_axis /= np.linalg.norm(y_axis, axis=-1, keepdims=True)
-        
-        z_axis = np.cross(x_axis, y_axis)
-        z_axis /= np.linalg.norm(z_axis, axis=-1, keepdims=True)
-        
-        # axes aligned with the box, centered at the box center
-        axes = np.stack([x_axis, y_axis, z_axis], axis=-2)
-        r = np.broadcast_to(self.link_radius, length.shape[: -1])
-        half_extents = np.stack([length[..., 0] / 2 + r, r, r], axis=-1)
-
-        return centers, axes, half_extents
 
 PANDA_CFG = {
     "name": "panda",
