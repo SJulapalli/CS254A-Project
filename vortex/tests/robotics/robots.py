@@ -1,6 +1,8 @@
 import numpy as np
 from dataclasses import dataclass
 
+
+
 @dataclass
 class SelfTestCase:
     name: str
@@ -294,6 +296,8 @@ KUKA_CFG = {
         ((0, 0, 0.2155), (np.pi/2, 0, 0)),
         ((0, 0.081, 0),  (-np.pi/2, np.pi, 0)),
     ],
+    # "high": np.deg2rad([170, 120, 170, 120, 170, 120, 175]),
+    # "low": -np.deg2rad([170, 120, 170, 120, 170, 120, 175]),
     "low":  [-2.967, -2.094, -2.967, -2.094, -2.967, -2.094, -3.054],
     "high": [ 2.967,  2.094,  2.967,  2.094,  2.967,  2.094,  3.054],
     "box_pad": 0.002,
