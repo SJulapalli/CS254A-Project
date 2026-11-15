@@ -7,7 +7,7 @@ import os
 OBB_DT = np.dtype([("center", "<f4", 3), ("half_extent", "<f4", 3), ("axis", "<f4", (3, 3))])
 AABB_DT = np.dtype([("center", "<f4", 3), ("half_extent", "<f4", 3)])
 MOTION_DT = np.dtype([("first_pose", "<u4"), ("num_poses", "<u4")])
-HEADER_DT = np.dtype([("magic", "S4"), ("seed", "<u4"), ("num_motions", "<u4"), ("num_poses", "<u4"), ("links_per_pose", "<u4"), ("num_obstacles", "<u4"), ("obb_size", "<u4"), ("aabb_size", "<u4")])
+HEADER_DT = np.dtype([("seed", "<u4"), ("num_motions", "<u4"), ("num_poses", "<u4"), ("links_per_pose", "<u4"), ("num_obstacles", "<u4"), ("obb_size", "<u4"), ("aabb_size", "<u4")])
 
 def load_data_from_pid(trace_directory, pid, bot):
     trace_dir = Path(trace_directory)
@@ -22,17 +22,25 @@ def load_data(link_info_path, obstacles_path, bot: Robot):
         obstacles = pickle.load(f)
     motion_poses = []
     motion_lengths = []
-    # motion_labels = []
+    motion_labels = []
     
     for pose_set, label_set in zip(poses, labels):
-        if len(pose_set) < 2:
+        n = len(pose_set)
+        if n == 0:
             continue
-        poses_np = np.asarray(pose_set, dtype=np.float64)
-        order = [0] + list(range(3, len(poses_np))) + [1] if len(poses_np) > 2 else [0, 1]
+        elif n == 1:
+            order = [0]
+        elif n == 2:
+            order = [0,1]
+        else:
+            order = [0] + list(range(3,n)) + [1]
         
+        poses_np = np.asarray(pose_set, dtype=np.float64)
         motion_poses.append(poses_np[order])
         motion_lengths.append(len(order))
-        # motion_labels.append(np.asarray(label_set, dtype=np.uint8)[order])
+        # The trace uses 1 = free, 0 = collision.
+        # The kernel uses 1 = collided, so flip the labels here.
+        motion_labels.append(1-np.asarray(label_set, dtype=np.uint8)[order])
     
     if len(motion_poses) == 0:
         return None
@@ -46,10 +54,10 @@ def load_data(link_info_path, obstacles_path, bot: Robot):
         obstacle_centers += [obstacle_center]
         obstacle_half_extents += [obstacle_half_extent]
         
-    
-    return motion_lengths, centers, axes, half_extents, obstacle_centers, obstacle_half_extents
+    labels_out = np.concatenate(motion_labels)
+    return motion_lengths, centers, axes, half_extents, obstacle_centers, obstacle_half_extents, labels_out
 
-def write_data_to_bin(motion_lengths, centers, axes, half_extents, obstacle_centers, obstacle_half_extents, output_directory, output_file, pid):
+def write_data_to_bin(motion_lengths, centers, axes, half_extents, obstacle_centers, obstacle_half_extents, labels, output_directory, output_file, pid):
     output_dir = Path(output_directory)
     num_poses, num_links = centers.shape[:2] # For the iiwa, num links should always be 7
     
@@ -72,7 +80,6 @@ def write_data_to_bin(motion_lengths, centers, axes, half_extents, obstacle_cent
     motions["num_poses"] = lengths
 
     header = np.zeros(1, dtype=HEADER_DT)
-    header["magic"] = b"URDF"           # doesn't really matter what the val is so long as main.cpp checks the same val.        
     header["seed"] = pid                # don't really have a seed rn so just storing the pid for reference.
     header["num_motions"] = len(motion_lengths)
     header["num_poses"] = num_poses
@@ -83,7 +90,7 @@ def write_data_to_bin(motion_lengths, centers, axes, half_extents, obstacle_cent
     # The data write order is important, it needs to be read back by main.cpp in the same order.
     output_path = output_dir / output_file
     with open(output_path, "wb") as f:
-        for arr in (header, obb_data, aabb_data, motions):
+        for arr in (header, obb_data, aabb_data, motions, labels):
             arr.tofile(f)
     
     
@@ -113,10 +120,13 @@ def write_data_to_bin(motion_lengths, centers, axes, half_extents, obstacle_cent
 
 
 if __name__ == "__main__":
-    # motion_lengths, centers, axes, half_extents, obstacle_centers, obstacle_half_extents = load_data_from_pid("/Users/Suhas/CS254A-Project/coll_prediction_artifact/trace_generation/bit_planning/logfiles_BIT_link", 2000, ROBOTS["iiwa"])
-    # print(centers.shape)
-    # print(half_extents.shape)
-    # print(axes.shape)
-    # print(motion_lengths)
-    # write_data_to_bin(motion_lengths, centers, axes, half_extents, obstacle_centers, obstacle_half_extents, "/Users/Suhas/CS254A-Project/vortex/tests/robotics/test_data", "test_output.bin", 2000)
+    here = os.path.dirname(os.path.abspath(__file__))
+    trace_dir = here + "/../../../coll_prediction_artifact/trace_generation/bit_planning/logfiles_BIT_link"
+    for pid in range(2000, 2200):
+        motion_lengths, centers, axes, half_extents, obstacle_centers, obstacle_half_extents, labels = load_data_from_pid(trace_dir, pid, ROBOTS["iiwa"])
+        # print(centers.shape)
+        # print(half_extents.shape)
+        # print(axes.shape)
+        # print(motion_lengths)
+        write_data_to_bin(motion_lengths, centers, axes, half_extents, obstacle_centers, obstacle_half_extents, labels, here + "/test_data", f"data_{pid}.bin", pid)
     pass

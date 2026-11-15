@@ -40,6 +40,7 @@ file_header_t header;
 std::vector<obb_t>    obbs;
 std::vector<aabb_t>   obstacles;
 std::vector<motion_t> motions;
+std::vector<uint8_t> labels;
 
 // Read file into memory & quit if file runs out early.
 void read_exact(void* dst, size_t size, size_t count, FILE* f) {
@@ -72,6 +73,8 @@ void load_file(const char* path) {
     read_exact(obbs.data(),      sizeof(obb_t),    obbs.size(),      f);
     read_exact(obstacles.data(), sizeof(aabb_t),   obstacles.size(), f);
     read_exact(motions.data(),   sizeof(motion_t), motions.size(),   f);
+    labels.resize(obbs.size());
+    read_exact(labels.data(), 1, labels.size(), f);
     std::fclose(f);
 }
 
@@ -132,11 +135,31 @@ int main(int argc, char** argv) {
     // Run CPU version
     std::vector<result_t> expected = check_cpu();
 
+    /*
     for (uint32_t m = 0; m < header.num_motions; ++m) {
         const result_t& r = expected[m];
         std::printf("motion %u: collided=%u hit_pose=%u hit_link=%u cdq=%u box_tests=%u\n",
                     m, r.collided, r.hit_pose, r.hit_link, r.cdq_count, r.box_tests);
     }
+
+    // PyBullet's answer per motion: first pose/link its label says collides
+    uint32_t L = header.links_per_pose;
+    for (uint32_t m = 0; m < header.num_motions; ++m) {
+        const motion_t& motion = motions[m];
+        uint32_t hit_pose = 0xFFFFFFFF, hit_link = 0xFFFFFFFF;
+        for (uint32_t p = 0; p < motion.num_poses && hit_pose == 0xFFFFFFFF; ++p) {
+            for (uint32_t k = 0; k < L; ++k) {
+                if (labels[(motion.first_pose + p) * L + k]) {
+                    hit_pose = p;
+                    hit_link = k;
+                    break;
+                }
+            }
+        }
+        std::printf("pybullet %u: collided=%u hit_pose=%u hit_link=%u\n",
+                    m, hit_pose != 0xFFFFFFFF, hit_pose, hit_link);
+    }
+    */
 
     // Connect to GPU
     vx_device_h dev = nullptr;
@@ -220,6 +243,27 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Check GPU results against PyBullet labels
+    // Only reports error if PyBullet says collided but GPU says free.
+    uint32_t L = header.links_per_pose;
+    uint32_t extras = 0;
+    for (uint32_t i = 0; i < num_motions; ++i) {
+        const motion_t& motion = motions[i];
+        bool pybullet_collided = false;
+        for (uint32_t p = 0; p < motion.num_poses && !pybullet_collided; ++p)
+            for (uint32_t k = 0; k < L && !pybullet_collided; ++k)
+                pybullet_collided = labels[(motion.first_pose + p) * L + k];
+        // error
+        if (pybullet_collided && !actual[i].collided) {
+            std::printf("*** motion %u: pybullet collided, box free\n", i);
+            ++errors;
+        }
+        // not error, warning
+        else if (!pybullet_collided && actual[i].collided) {
+            ++extras;
+        }
+    }
+
     // Free GPU resources
     vx_event_release(read_ev);
     vx_event_release(launch_ev);
@@ -233,10 +277,16 @@ int main(int argc, char** argv) {
     vx_device_dump_perf(dev, stdout);
     vx_device_release(dev);
 
+    if (extras) {
+        std::printf("%u of %u motions: PyBullet said free but box said collided\n",
+                    extras, num_motions);
+    }
+
     if (errors) {
         std::cout << "Found " << errors << " errors!\nFAILED!" << std::endl;
         return errors;
     }
+
     std::cout << "PASSED!" << std::endl;
 
     return 0;

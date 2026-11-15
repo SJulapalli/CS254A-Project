@@ -61,3 +61,39 @@ print(poses[0][0])      # 7 joint angles of the first pose
 print(labels[0][0])     # 7 collision results (1 = free, 0 = collides)
 print(obstacles)        # [(half_size, center), ...]
 ```
+
+## 3. Convert the joint angles to boxes.
+
+From the top of the repo:
+
+```
+mkdir -p vortex/tests/robotics/test_data
+python3 vortex/tests/robotics/gen_data.py
+```
+
+For each problem 2000 to 2199, gen_data.py reads the two log files from step 2
+and writes vortex/tests/robotics/test_data/data_<id>.bin, the input file for
+the Vortex collision checker.
+
+It keeps every question, both single sampled poses and motions. Each one becomes
+a motion in the file (a single pose is a motion with 1 pose). The planner saves
+a motion's poses as start, end, then the poses in between (the first of which
+repeats the start). gen_data.py reorders them to start, in between, end, and
+drops the repeat.
+
+For each pose it turns the 7 joint angles into 7 oriented boxes, one per link,
+using the KUKA model in vortex/tests/robotics/robots.py.
+
+It also saves PyBullet's collision result for each link, flipped to
+1 = collides, 0 = free (the opposite of the log files).
+
+Each .bin file is laid out in this order (structs in
+vortex/tests/robotics/naive/common.h):
+
+```
+header      28 bytes             problem id, counts, struct sizes
+link boxes  60 bytes each        center, half size, 3 axes; index = pose * 7 + link
+obstacles   24 bytes each        center, half size
+motions     8 bytes each         first pose, number of poses
+labels      1 byte each          PyBullet result per link box; 1 = collides
+```
