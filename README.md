@@ -1,7 +1,13 @@
-# KUKA collision data for Vortex
+# Robot Collision Detection on Vortex
+
+CS254A (Fall 2026) project. We reproduce the collision prediction idea from
+Shah et al., ISCA 2024, on the Vortex RISC-V GPU, using real collision checks
+from a KUKA iiwa arm planned with BIT*.
+
+## KUKA collision data for Vortex
 
 
-## 1. Install the planner's dependencies
+### 1. Install the planner's dependencies
 
 From the top of the repo:
 
@@ -11,7 +17,7 @@ pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt --no-build-isolation --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
-## 2. Run planner
+### 2. Run planner
 
 ```
 mkdir -p logfiles_BIT_link
@@ -62,7 +68,7 @@ print(labels[0][0])     # 7 collision results (1 = free, 0 = collides)
 print(obstacles)        # [(half_size, center), ...]
 ```
 
-## 3. Convert the joint angles to boxes.
+### 3. Convert the joint angles to boxes.
 
 From the top of the repo:
 
@@ -96,4 +102,38 @@ link boxes  60 bytes each        center, half size, 3 axes; index = pose * 7 + l
 obstacles   24 bytes each        center, half size
 motions     8 bytes each         first pose, number of poses
 labels      1 byte each          PyBullet result per link box; 1 = collides
+```
+
+### 4. Run collision checker on Vortex
+
+From vortex/build:
+
+
+```
+make -C tests/robotics/naive run-simx
+```
+
+This runs problem 2000 by default. To run another problem:
+
+```
+make -C tests/robotics/naive run-simx OPTS="-f $PWD/../tests/robotics/test_data/data_2001.bin"
+```
+
+The test runs one GPU thread per motion. Each thread checks its poses in order,
+link by link against every obstacle, and stops at the first hit.
+
+It then checks the results two ways:
+
+- GPU vs CPU: main.cpp runs the same check on the CPU. Every motion must
+  match exactly, or the test fails.
+- GPU vs PyBullet: if PyBullet's label says a motion collides but the boxes
+  say it is free, the test fails. The opposite case (boxes collide, PyBullet
+  free) is expected, since the boxes are larger than the real link meshes.
+  These are only counted and printed as a warning.
+
+The output ends with the cycle count and PASSED or FAILED:
+
+```
+PERF: instrs=..., cycles=..., IPC=...
+PASSED!
 ```

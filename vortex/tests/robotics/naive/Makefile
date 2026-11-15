@@ -9,7 +9,7 @@ SRCS := $(SRC_DIR)/main.cpp
 
 VX_SRCS := $(SRC_DIR)/kernel.cpp
 
-OPTS ?= -f $(SRC_DIR)/../test_data/test_output_2000.bin
+OPTS ?= -f $(SRC_DIR)/../test_data/data_2000.bin
 
 KERNEL_LIB := vortex2
 
