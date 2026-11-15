@@ -398,6 +398,7 @@ class KukaEnv:
 
     def _point_in_free_space(self, state):
         #print("here")
+        # print(state)
         t0 = time()
         if not self._valid_state(state):
             return False
@@ -417,6 +418,7 @@ class KukaEnv:
             #print("False")
             return False
     def _point_in_free_space_probe(self, state):
+        print(state)
         t0 = time()
         if not self._valid_state(state):
             return False,[],[]

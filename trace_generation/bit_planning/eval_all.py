@@ -19,7 +19,7 @@ envs = [
     ]
 indexeses = [np.arange(1000), np.arange(1000), np.arange(1000), np.arange(2000, 3000), np.arange(2000, 3000), np.arange(2000, 3000), np.arange(2000, 3000)]
 innn=int(sys.argv[1])
-indexeses = [np.arange(1000), np.arange(1000), np.arange(1000), np.arange(2000, 3000), np.arange(innn, innn+200), np.arange(2000, 3000), np.arange(2000, 3000)]
+indexeses = [np.arange(1000), np.arange(1000), np.arange(1000), np.arange(2000, 3000), np.arange(innn, innn+1), np.arange(2000, 3000), np.arange(2000, 3000)]
 seeds = [1234]#, 2341, 3412, 4123]
 #methods = [eval_next, eval_bit, eval_rrt, eval_lazysp]
 methods = [eval_gnn, eval_next, eval_bit, eval_rrt, eval_lazysp]
