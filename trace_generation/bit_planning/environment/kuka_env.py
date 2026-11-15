@@ -435,8 +435,7 @@ class KukaEnv:
                 link_feas_info.append(0)
             else:
                 link_feas_info.append(1)
-            _ls = p.getLinkState(self.kukaId, linkid)
-            link_info.append(list(_ls[0]) + list(_ls[1]))
+        link_info = [float(a) for a in state]
         #print(link_feasible,len(p.getContactPoints(self.kukaId)))
         
         if len(p.getContactPoints(self.kukaId)) == 0:
