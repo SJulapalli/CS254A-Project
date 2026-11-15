@@ -45,7 +45,7 @@ static_assert(sizeof(kernel_arg_t) == 48, "kernel_arg_t layout + 4 bytes padding
 
 #ifndef __VORTEX__
 typedef struct {
-    char magic[4];
+    char magic[4]; //don't really need this tbh, useful for input validation though
     uint32_t seed; //for reproducibility on rando-gen
     uint32_t num_motions;
     uint32_t num_poses; // total poses across all motions
