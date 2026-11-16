@@ -137,3 +137,26 @@ The output ends with the cycle count and PASSED or FAILED:
 PERF: instrs=..., cycles=..., IPC=...
 PASSED!
 ```
+
+### 5. Run collision checker on Vortex on all 200 tests
+
+From vortex/tests/robotics:
+
+```
+python3 run_all.py
+```
+
+This runs the naive test (step 4) on every data_<id>.bin in test_data/,
+one after another, and prints one line per problem:
+
+```
+2189: PASSED  cycles=504833 cdq=413 misses=0 extras=12
+```
+
+- cycles: how long the kernel took on the GPU
+- cdq: collision checks done, one per link checked against all obstacles
+- misses: motions where PyBullet says collides but the boxes say free (must be 0)
+- extras: motions where the boxes say collides but PyBullet says free
+
+The same results are saved to vortex/tests/robotics/results/naive_simx.csv.
+All 200 problems take a few minutes in total.
